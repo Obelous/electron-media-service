@@ -2,8 +2,6 @@
 #include "nan.h"
 #import <AppKit/AppKit.h>
 
-static std::string trackID;
-
 @implementation NativeMediaController
   DarwinMediaService* _service;
 
@@ -42,12 +40,13 @@ void DarwinMediaService::Emit(std::string eventName) {
 
 void DarwinMediaService::EmitWithInt(std::string eventName, int details) {
   v8::Local<v8::Value> argv[2] = {
-    //v8::String::NewFromUtf8(v8::Isolate::GetCurrent(), eventName.c_str()),
-    Nan::New(eventName).ToLocalChecked(),
-    v8::Integer::New(v8::Isolate::GetCurrent(), details)
+    Nan::New<v8::String>(eventName.c_str()).ToLocalChecked(),
+    Nan::New<v8::Integer>(details)
   };
 
-  persistentCallback.Call(2, argv);
+  Nan::AsyncResource resource("auryo:addon.callback");
+
+  persistentCallback.Call(2, argv, &resource);
 }
 
 NAN_METHOD(DarwinMediaService::New) {
@@ -95,13 +94,10 @@ NAN_METHOD(DarwinMediaService::SetMetaData) {
   std::string songArtist = *Nan::Utf8String(info[1]);
   std::string songAlbum = *Nan::Utf8String(info[2]);
   std::string songState = *Nan::Utf8String(info[3]);
-  std::string songID = *Nan::Utf8String(info[4]);
-  double currentTime = info[5]->NumberValue();
-  double duration = info[6]->NumberValue();
 
-  std::string newPosterUrl;
-  if (!info[7]->IsUndefined() && !info[7]->IsNull())
-   newPosterUrl = *Nan::Utf8String(info[7]);
+  unsigned int songID = Nan::To<int>(info[4]).ToChecked();
+  unsigned int currentTime = Nan::To<int>(info[5]).ToChecked();
+  unsigned int duration = Nan::To<int>(info[6]).ToChecked();
 
   NSMutableDictionary *songInfo = [[NSMutableDictionary alloc] init];
   [songInfo setObject:[NSString stringWithUTF8String:songTitle.c_str()] forKey:MPMediaItemPropertyTitle];
@@ -109,40 +105,15 @@ NAN_METHOD(DarwinMediaService::SetMetaData) {
   [songInfo setObject:[NSString stringWithUTF8String:songAlbum.c_str()] forKey:MPMediaItemPropertyAlbumTitle];
   [songInfo setObject:[NSNumber numberWithFloat:currentTime] forKey:MPNowPlayingInfoPropertyElapsedPlaybackTime];
   [songInfo setObject:[NSNumber numberWithFloat:duration] forKey:MPMediaItemPropertyPlaybackDuration];
-  [songInfo setObject:[NSString stringWithUTF8String:songID.c_str()] forKey:MPMediaItemPropertyPersistentID];
-  songInfo[MPNowPlayingInfoPropertyMediaType] = @(MPNowPlayingInfoMediaTypeAudio);
+  [songInfo setObject:[NSNumber numberWithFloat:songID] forKey:MPMediaItemPropertyPersistentID];
 
-  if (songState == "playing") 
-  {
+  if (songState == "playing") {
     [MPNowPlayingInfoCenter defaultCenter].playbackState = MPNowPlayingPlaybackStatePlaying;
-    [songInfo setObject:[NSNumber numberWithFloat:1.0f] forKey:MPNowPlayingInfoPropertyPlaybackRate];
-  } 
-  else if (songState == "paused") 
-  {
+  } else if (songState == "paused") {
     [MPNowPlayingInfoCenter defaultCenter].playbackState = MPNowPlayingPlaybackStatePaused;
-    [songInfo setObject:[NSNumber numberWithFloat:0.0f] forKey:MPNowPlayingInfoPropertyPlaybackRate];
-  } 
-  else 
-  {
+  } else {
     [MPNowPlayingInfoCenter defaultCenter].playbackState = MPNowPlayingPlaybackStateStopped;
   }
-
-  // Build artwork.
-  MPMediaItemArtwork* artwork = nil;
-  if (!newPosterUrl.empty())
-  {
-    NSString* path = [NSString stringWithUTF8String:newPosterUrl.c_str()];
-    NSImage* poster = [[NSImage alloc] initWithContentsOfFile:[path substringFromIndex:7]];
-    if (poster)
-    {
-      artwork = [[MPMediaItemArtwork alloc] initWithBoundsSize:poster.size requestHandler:^NSImage* _Nonnull(CGSize size) {
-        return poster;
-      }];
-    }
-  }
-
-  if (artwork)
-    [songInfo setObject:artwork forKey:MPMediaItemPropertyArtwork];
 
   [[MPNowPlayingInfoCenter defaultCenter] setNowPlayingInfo:songInfo];
 }
